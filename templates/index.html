@@ -138,7 +138,7 @@
                           <tbody>
                             {% for x in downloadlist %}
                             <tr>
-                              <td>{{ download_names[x] }}</td>
+                              <td><a href="/show_download/{{download_ids[x]}}">{{ download_names[x] }}</a></td>
                               <td>{{ download_types[x] }}</td>
                               <td><a href="{{gdrive_links[x]}}">Google Drive</a></td>
                             </tr>

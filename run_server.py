@@ -52,17 +52,19 @@ def index():
         downloadlist = range(0, all_downloads.count(), 1)
         download_names = []
         download_types = []
+        download_ids = []
         gdrive_links = []
         if all_downloads.count() > 0:
             for download in all_downloads:
                 download_names.append(download['name'])
+                download_ids.append(download['identifier'])
                 if download['download_type'] == 'direct':
                     download_types.append('Direct Download')
                 elif download['download_type'] == 'torrent':
                     download_types.append('Torrent Download')
                 gdrive_links.append(download['drive_link'])
 
-        return render_template('index.html', user_fullname=user_fullname, downloadlist=downloadlist, download_names=download_names, download_types=download_types, gdrive_links=gdrive_links)
+        return render_template('index.html', user_fullname=user_fullname, downloadlist=downloadlist, download_names=download_names, download_types=download_types, gdrive_links=gdrive_links, download_ids=download_ids)
     else:
         return redirect('/userlogin')  
       
@@ -73,21 +75,23 @@ def myuploads():
         user_result = users.find_one({'name':session['username']})
         user_fullname = user_result['fullname']
         downloads = mongo.db.downloads
-        all_downloads = downloads.find({'added_by' : session['username']}, {'name': True, 'download_type': True, 'drive_link': True, '_id': False})
+        all_downloads = downloads.find({'added_by' : session['username']})
         downloadlist = range(0, all_downloads.count(), 1)
         download_names = []
         download_types = []
+        download_ids = []
         gdrive_links = []
         if all_downloads.count() > 0:
             for download in all_downloads:
                 download_names.append(download['name'])
+                download_ids.append(download['identifier'])
                 if download['download_type'] == 'direct':
                     download_types.append('Direct Download')
                 elif download['download_type'] == 'torrent':
                     download_types.append('Torrent Download')
                 gdrive_links.append(download['drive_link'])
 
-        return render_template('index.html', user_fullname=user_fullname, downloadlist=downloadlist, download_names=download_names, download_types=download_types, gdrive_links=gdrive_links)
+        return render_template('index.html', user_fullname=user_fullname, downloadlist=downloadlist, download_names=download_names, download_types=download_types, gdrive_links=gdrive_links, download_ids=download_ids)
     else:
         return redirect('/userlogin')  
 
@@ -184,7 +188,7 @@ def get_download_status(download_gid):
 
 def handleGDriveUpload(filepath, identifier):
     print("UPLOADING TO DRIVE")
-    full_output = subprocess.check_output(['gdrive', 'upload', '--patent', '1y1cmx_L_c_pQgAuLvTbVn76EfkwgIL4F',  filepath])
+    full_output = subprocess.check_output(['gdrive', 'upload', '--parent', '1y1cmx_L_c_pQgAuLvTbVn76EfkwgIL4F',  filepath])
     full_output_str = full_output.decode('utf-8')
     spl1 = full_output_str.split('Uploaded ')
     file_id = spl1[1].split(' at')[0]
