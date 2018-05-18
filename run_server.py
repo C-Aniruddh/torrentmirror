@@ -21,6 +21,11 @@ app.config['MONGO_URI'] = 'mongodb://localhost:27017/torrentmirror'
 app.config['DOWNLOAD_FOLDER'] = DOWNLOAD_FOLDER
 app.secret_key = 'mysecret'
 
+app.config.update(
+    CELERY_BROKER_URL='redis://localhost:6379',
+    CELERY_RESULT_BACKEND='redis://localhost:6379'
+)
+
 
 mongo = PyMongo(app)
 client = PyAria2('localhost', 6000)
@@ -38,6 +43,7 @@ def make_celery(app):
     celery.Task = ContextTask
     return celery
 
+celery = make_celery(app)
 # App routes 
 
 # Index
@@ -110,7 +116,7 @@ def add_download():
             if download_type == 'direct' : 
                 this_download_gid = client.addUri(download_uris, dict(dir=app.config['DOWNLOAD_FOLDER']))
             elif download_type == 'torrent' : 
-                metadata_gid = client.addUri(download_uris, dict(dir=app.config['DOWNLOAD_FOLDER']))
+                metadata_gid = client.addUri(download_uris, dict(dir=os.path.join(app.config['DOWNLOAD_FOLDER'], request.form['download_name'])))
                 metadata_download_result = client.tellStatus(metadata_gid)
                 while 'followedBy' not in metadata_download_result:
                     metadata_download_result = client.tellStatus(metadata_gid)
@@ -151,6 +157,7 @@ def show_download(identifier):
 
         return render_template('show_single_download.html', user_fullname=user_fullname, download_name=current_download_name, download_gid=current_download_gid, download_status=current_download_status, identifier=identifier)
         
+
 @app.route('/get_download_status/<download_gid>', methods=['GET'])
 def get_download_status(download_gid):
     
@@ -174,21 +181,36 @@ def get_download_status(download_gid):
         downloads = mongo.db.downloads
         current_download_result_full = downloads.find_one({'gid': download_gid})
         download_identifier = current_download_result_full['identifier']
+        download_name = current_download_result_full['name']
         download_status_str = 'Download complete'
-        download_file = current_download_status['files'][0]
-        download_file_path = download_file['path']
-        download_link = current_download_result_full['drive_link']
-        if download_link == 'default':
-            handleGDriveUpload(download_file_path, download_identifier)    
-        downloads.update_one({'gid': download_gid}, {"$set": {'status': 'done'}})
+        download_link = ''
+        download_type = current_download_result_full['download_type']
+        if download_type == 'direct':
+            download_file = current_download_status['files'][0]
+            download_file_path = download_file['path']
+            download_link = current_download_result_full['drive_link']
+            if download_link == 'default':
+                downloads.update_one({'gid': download_gid}, {"$set": {'drive_link': 'uploading'}})
+                handleGDriveUploadFile.delay(download_file_path, download_identifier).wait()
+                downloads.update_one({'gid': download_gid}, {"$set": {'status': 'done'}})
+        if download_type == 'torrent':
+            download_file = current_download_status['files']
+            download_file_path = os.path.join(app.config['DOWNLOAD_FOLDER'], download_name)
+            download_link = current_download_result_full['drive_link']
+            if download_link == 'default':
+                downloads.update_one({'gid': download_gid}, {"$set": {'drive_link': 'uploading'}})
+                handleGDriveUploadFolder.delay(download_file_path, download_identifier, download_name).wait()
+                downloads.update_one({'gid': download_gid}, {"$set": {'status': 'done'}})
+        if download_link == 'uploading':
+            download_status_str = 'Uploading to Google Drive! Check back in a few minutes!'
 
     download_factor = str(int(completed_length)/int(total_length))
     return jsonify(download_speed=download_status_str, completion_percentage=completion_percentage, download_factor=download_factor)
 
-
-def handleGDriveUpload(filepath, identifier):
-    print("UPLOADING TO DRIVE")
-    full_output = subprocess.check_output(['gdrive', 'upload', '--parent', '1y1cmx_L_c_pQgAuLvTbVn76EfkwgIL4F',  filepath])
+@celery.task()
+def handleGDriveUploadFile(filepath, identifier):
+    print("UPLOADING TO DRIVE DIRECT")
+    full_output = subprocess.check_output(['gdrive', 'upload', '--parent', '1kZKH5bBtoXkM0kUWhh7bp5S4n_hrNrL4',  filepath])
     full_output_str = full_output.decode('utf-8')
     spl1 = full_output_str.split('Uploaded ')
     file_id = spl1[1].split(' at')[0]
@@ -196,6 +218,21 @@ def handleGDriveUpload(filepath, identifier):
     gdrive_link = 'https://drive.google.com/uc?id=%s&export=download'% (file_id)
     downloads = mongo.db.downloads
     downloads.update_one({'identifier': identifier}, {"$set": {'drive_link': gdrive_link}})
+    downloads.update_one({'identifier': identifier}, {"$set": {'status': 'done'}})
+    print("UPLOADED AND UPDATED DIRECT")
+
+@celery.task()
+def handleGDriveUploadFolder(files, identifier, name):
+    print("UPLOADING TO DRIVE")
+    full_output = subprocess.check_output(['gdrive', 'mkdir', '--parent', '1kZKH5bBtoXkM0kUWhh7bp5S4n_hrNrL4',  name])
+    full_output_str = full_output.decode('utf-8')
+    spl1 = full_output_str.split('Directory ')
+    file_id = spl1[1].split(' created')[0]
+    upload = subprocess.check_output(['gdrive', 'upload', '--recursive', '--parent', file_id, files])
+    gdrive_link = 'https://drive.google.com/drive/folders/%s' % (file_id)
+    downloads = mongo.db.downloads
+    downloads.update_one({'identifier': identifier}, {"$set": {'drive_link': gdrive_link}})
+    downloads.update_one({'identifier': identifier}, {"$set": {'status': 'done'}})
     print("UPLOADED AND UPDATED")
 
 @app.route('/get_drive_link/<identifier>', methods=['POST', 'GET'])
